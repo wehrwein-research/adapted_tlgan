@@ -1,0 +1,1 @@
+python3 make_image.py /cluster/research-groups/wehrwein/webcam/amos/tlgan_models/00016-sg2-a1-00017390_512-fman_lin_109-n_4days_0-jungle/network-snapshot-002120.pkl
