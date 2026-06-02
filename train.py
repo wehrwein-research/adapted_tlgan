@@ -152,11 +152,16 @@ def _set_noise_per_f(c, noises, n_frames, n_days):
     c.cond_args.noise_f = scales # in frame deltas, for [1e-3f] + [manual freqs]
     return '-n_' + '_'.join([str(f).replace(' ', '') for f in noises])
 
-def _set_freqs(c, base_freqs, explicit_lin):
+def _set_freqs(c, base_freqs, explicit_lin, no_trend=False):
     assert c.cond_args.type in ['fourier', 'f_concat']
-    
+
     desc = ''
-    if explicit_lin:
+    if no_trend:
+        c.cond_args.f_manual = [*base_freqs]
+        c.cond_args.include_lin = False
+        c.cond_args.dims = 2 * len(c.cond_args.f_manual)
+        desc += '-fman_notrend'
+    elif explicit_lin:
         c.cond_args.f_manual = [*base_freqs]
         c.cond_args.include_lin = True
         c.cond_args.dims = 2*(len(c.cond_args.f_manual) + 1)
@@ -206,7 +211,7 @@ def parse_noises(noises, c=None, n_frames=None, n_days=None):
     assert len(ret) == len(noises)
     return ret
 
-def dataset(c, opts, path, cond_type, f=[], noise=[], mask=None, explicit_lin=True):
+def dataset(c, opts, path, cond_type, f=[], noise=[], mask=None, explicit_lin=True, no_trend=False):
     try:
         res = list(r for r in [128, 256, 512, 1024] if str(r) in path)
         assert len(res) == 1, 'Path does not indicate resolution'
@@ -251,11 +256,18 @@ def dataset(c, opts, path, cond_type, f=[], noise=[], mask=None, explicit_lin=Tr
 
         if cond_type in ['fourier', 'f_concat']:
             freqs = f or list(filter(lambda f: f > 1, [days/365.25, days])) # only cylces of over 1Hz
-            desc += _set_freqs(c, freqs, explicit_lin)
-        
+            desc += _set_freqs(c, freqs, explicit_lin, no_trend=no_trend)
+
         if 'auto' in noise:
-            noise_lin = [] if days < 365.25 else [f'{0.2 * days / 365.25:.2f} years'] # fifth of whole sequence length
-            desc += _set_noise_per_f(c, [*noise_lin, '4 days', 0], frames, days) # lin, years, days
+            if no_trend:
+                n_f = len(c.cond_args.f_manual)
+                if n_f >= 2:
+                    desc += _set_noise_per_f(c, ['4 days', 0], frames, days)
+                elif n_f == 1:
+                    desc += _set_noise_per_f(c, [0], frames, days)
+            else:
+                noise_lin = [] if days < 365.25 else [f'{0.2 * days / 365.25:.2f} years'] # fifth of whole sequence length
+                desc += _set_noise_per_f(c, [*noise_lin, '4 days', 0], frames, days) # lin, years, days
         elif len(noise) == 1:
             desc += _set_noise_global(c, noise, frames, days)
         elif isinstance(noise, Iterable) and len(noise) > 0:
@@ -296,6 +308,7 @@ def parse_comma_separated_list(s):
 @click.option('--cond',         help='Conditioning type',                                                 type=click.Choice(['fourier', 'f_concat', 'concat', 'none']), default='fourier', show_default=True)
 @click.option('--noise',        help='Timestamp augmentation noise', metavar='[NAME|A,B,C|auto]',         type=parse_comma_separated_list, default='auto', show_default=True)
 @click.option('--days',         help='Number of days in sequence [default: use metadata]', metavar='INT', type=int, default=None)
+@click.option('--no-trend',     help='Remove global trend; only cyclic frequencies',                        is_flag=True, default=False)
 
 # Misc hyperparameters.
 @click.option('--gamma',        help='R1 regularization weight [default: varies]', metavar='FLOAT',       type=click.FloatRange(min=0))
@@ -338,7 +351,7 @@ def main(**kwargs):
     # Initialize config and dataset.
     opts = dnnlib.EasyDict(kwargs) # Command line arguments.
     c = dnnlib.EasyDict() # Main config dict.
-    desc = dataset(c, opts, path=opts.data, cond_type=opts.cond, noise=opts.noise)
+    desc = dataset(c, opts, path=opts.data, cond_type=opts.cond, noise=opts.noise, no_trend=opts.no_trend)
 
     # Sanity checks.
     if c.cond_args.type in ['fourier', 'f_concat']:
